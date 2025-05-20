@@ -1,0 +1,23 @@
+[project]
+name = "course_recommendation_multi_agent"
+version = "0.1.0"
+description = "course-recommendation-multi-agent using crewAI"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "crewai[tools]>=0.120.1,<1.0.0"
+]
+
+[project.scripts]
+course_recommendation_multi_agent = "course_recommendation_multi_agent.main:run"
+run_crew = "course_recommendation_multi_agent.main:run"
+train = "course_recommendation_multi_agent.main:train"
+replay = "course_recommendation_multi_agent.main:replay"
+test = "course_recommendation_multi_agent.main:test"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.crewai]
+type = "crew"

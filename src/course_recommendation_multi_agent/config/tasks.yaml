@@ -1,0 +1,50 @@
+profile_collection_task:
+  description: >
+    Engage with the student to collect their educational background, interests,
+    preferences, and career goals through natural conversation. Build a comprehensive
+    profile for course recommendations.
+  expected_output: >
+    A detailed student profile including educational level, interests, constraints,
+    and career aspirations.
+  agent: profile_agent
+
+course_discovery_task:
+  description: >
+    Search for and validate courses that match the student's profile using both
+    the vector database and web search. Ensure courses meet quality standards
+    and have complete metadata.
+  expected_output: >
+    A list of validated courses with complete metadata that match the student's
+    profile.
+  agent: discovery_agent
+  context: [profile_collection_task]
+
+recommendation_task:
+  description: >
+    Generate personalized course recommendations based on the validated courses
+    and student profile. Provide clear explanations for each recommendation.
+  expected_output: >
+    A ranked list of course recommendations with explanations for why each
+    course is suitable for the student.
+  agent: recommendation_agent
+  context: [course_discovery_task]
+
+career_guidance_task:
+  description: >
+    Analyze selected courses and provide career path insights, including potential
+    job roles, industry trends, and further educational opportunities.
+  expected_output: >
+    Detailed career guidance including job prospects, skill requirements, and
+    educational pathways.
+  agent: career_agent
+  context: [recommendation_task]
+
+orchestration_task:
+  description: >
+    Manage the overall conversation flow, coordinate between agents, and ensure
+    a smooth user experience throughout the recommendation process.
+  expected_output: >
+    A well-coordinated conversation that guides the student through profile
+    building, course recommendations, and career insights.
+  agent: orchestrator_agent
+  context: [profile_collection_task, course_discovery_task, recommendation_task, career_guidance_task] 
