@@ -12,8 +12,8 @@ class Constraints(BaseModel):
     certification_needed: bool = False
     location_preference: str = "any"  # online, offline, hybrid, any
 
-class Student(BaseModel):
-    id: str
+class StudentProfile(BaseModel):
+    name: str
     educational_level: str
     age: int
     interests: List[str]
@@ -27,7 +27,7 @@ class Student(BaseModel):
     
     def to_dict(self) -> Dict:
         return {
-            "id": self.id,
+            "name": self.name,
             "educational_level": self.educational_level,
             "age": self.age,
             "interests": self.interests,

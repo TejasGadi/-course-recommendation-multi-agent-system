@@ -3,6 +3,13 @@ import sys
 import warnings
 
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+import os
+
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
+os.environ["MODEL"] = os.getenv("MODEL")
 
 from course_recommendation_multi_agent.crew import CourseRecommendationMultiAgent
 

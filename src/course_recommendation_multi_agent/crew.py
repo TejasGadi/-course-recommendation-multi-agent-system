@@ -81,7 +81,8 @@ class CourseRecommendationMultiAgent():
     def profile_collection_task(self) -> Task:
         """Task for collecting student profile"""
         return Task(
-            config=self.tasks_config['profile_collection_task']
+            config=self.tasks_config['profile_collection_task'],
+            human_input=True
         )
 
     @task
@@ -118,7 +119,6 @@ class CourseRecommendationMultiAgent():
                 self.orchestration_task()
             ],
             process=Process.sequential,
-            chat_llm=LLM(model="gpt-4o-mini"),
             verbose=True,
             memory=True
         )

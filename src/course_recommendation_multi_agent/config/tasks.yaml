@@ -1,11 +1,17 @@
 profile_collection_task:
   description: >
     Engage with the student to collect their educational background, interests,
-    preferences, and career goals through natural conversation. Build a comprehensive
-    profile for course recommendations.
+    preferences, and career goals through natural conversation. Ask questions one
+    by one and wait for the student's response. Use the responses to build a
+    comprehensive profile. Make sure to:
+    1. Ask one question at a time
+    2. Wait for and process the student's response
+    3. Use the response to guide the next question
+    4. Store collected information in the student profile
+    5. Ensure all necessary profile fields are filled
   expected_output: >
     A detailed student profile including educational level, interests, constraints,
-    and career aspirations.
+    and career aspirations, built through interactive conversation with the student.
   agent: profile_agent
 
 course_discovery_task:

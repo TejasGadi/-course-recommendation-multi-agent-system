@@ -1,14 +1,15 @@
 from crewai.tools import BaseTool
-from pydantic import Field
+from pydantic import Field, BaseModel
 from typing import Optional, Dict, List
 import json
 import os
 from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
 from .models.course import Course
-from .models.student import Student
+from .models.student import StudentProfile, Availability, Constraints
 from datetime import datetime
 import chromadb
 from chromadb.config import Settings
+from crewai import LLM
 
 class CourseVectorDB:
     """Vector database for course storage and retrieval"""
@@ -135,45 +136,184 @@ class StudentProfileTool(BaseTool):
     """Tool for managing student profiles and preferences."""
     name: str = "Student Profile Manager"
     description: str = """
-    Use this tool to manage student profile information.
+    Use this tool to manage student profile information and interact with the student.
     Actions:
     - create: Create new student profile
     - update: Update existing profile
     - get: Retrieve profile information
+    - ask: Ask a question to the student and get their response
+    - next_question: Get next question based on current profile state
     """
     profiles: Dict = Field(default_factory=dict)
+    llm: LLM = Field(default_factory=lambda: LLM(model=os.environ["MODEL"]))
+
+    def _get_next_empty_field(self, profile_data: Dict) -> Optional[str]:
+        """Identify next empty required field in the profile."""
+        # Define the order of fields and their base questions
+        required_fields = [
+            ("name", "name"),
+            ("educational_level", "education"),
+            ("age", "age"),
+            ("interests", "interests"),
+            ("course_mode", "learning mode"),
+            ("max_duration_months", "time commitment"),
+            ("availability.daily_hours", "daily hours"),
+            ("availability.preferred_timing", "preferred timing"),
+            ("availability.days_per_week", "weekly commitment"),
+            ("constraints.max_cost", "budget"),
+            ("constraints.language", "languages"),
+            ("constraints.certification_needed", "certification"),
+            ("constraints.location_preference", "location"),
+            ("career_goals", "career goals"),
+            ("previous_courses", "previous courses"),
+            ("skills", "current skills")
+        ]
+
+        # Check nested fields in availability and constraints
+        if "availability" not in profile_data or not isinstance(profile_data["availability"], dict):
+            return "availability.daily_hours"
+        if "constraints" not in profile_data or not isinstance(profile_data["constraints"], dict):
+            return "constraints.language"
+
+        # Find the next empty field
+        for field, field_type in required_fields:
+            if "." in field:
+                parent, child = field.split(".")
+                if parent in profile_data and isinstance(profile_data[parent], dict):
+                    if child not in profile_data[parent] or not profile_data[parent][child]:
+                        return field
+            elif field not in profile_data or not profile_data[field]:
+                return field
+        
+        return None
+
+    def _generate_contextual_question(self, field: str, profile_data: Dict) -> str:
+        """Generate a contextual question based on the field and previous answers."""
+        # Create a prompt for the LLM to generate a contextual question
+        context = "Previous answers:\n"
+        for key, value in profile_data.items():
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    context += f"{key}.{sub_key}: {sub_value}\n"
+            else:
+                context += f"{key}: {value}\n"
+
+        prompt = f"""Based on the following context of previous answers:
+{context}
+
+Generate a natural, conversational question to ask about the user's {field.replace('.', ' ')}. 
+The question should be contextual and reference previous answers where relevant.
+If this is the first question (about name), just ask "What is your name?"
+
+Question:"""
+
+        # Use LLM to generate the question
+        class QuestionResponse(BaseModel):
+            question: str
+
+        llm = LLM(model=os.environ["MODEL"], response_format=QuestionResponse)
+        response = llm.call(prompt)
+        return response.question
+
+    def _parse_response(self, response: str, field: str) -> any:
+        """Parse user response based on field type."""
+        if field == "age":
+            return int(response)
+        elif field in ["interests", "career_goals", "previous_courses", "skills"]:
+            # Use LLM to extract list from free text
+            # list_schema = type("ListSchema", (BaseModel,), {"items": List[str]})
+            class ListSchema(BaseModel):
+                items: List[str]
+            
+            llm = LLM(model=os.environ["MODEL"], response_format=ListSchema)
+            parsed = llm.call(f"Extract a list of items from this text: {response}")
+            return parsed.items
+        elif field == "constraints.certification_needed":
+            return response.lower() in ["yes", "true", "1", "y"]
+        elif field in ["availability.daily_hours", "availability.days_per_week"]:
+            return int(response)
+        return response
 
     def _run(self, action: str, data: Optional[Dict] = None) -> str:
         try:
-            if action == "create":
-                if not data:
-                    return "Error: Profile data required for creation"
-                profile_id = data.get("id", str(datetime.now().timestamp()))
-                self.profiles[profile_id] = {
-                    **data,
+            if action == "ask":
+                if not data or "question" not in data:
+                    return "Error: Question required for asking"
+                if not data or "description" not in data:
+                    data["question"] = data["description"]
+                    return "Error: Question required for asking"
+                print("\n" + "-"*80)
+                print("👤 Question for you:")
+                print(data["question"])
+                print("-"*80)
+                response = input("Your answer: ").strip()
+                return response
+
+            elif action == "create":
+                # Ask for name first
+                question = self._generate_contextual_question("name", {})
+                name = self._run("ask", {"question": question})
+                if not name:
+                    return "Error: Name is required"
+                
+                self.profiles[name] = {
+                    "name": name,
                     "created_at": datetime.now().isoformat(),
                     "last_updated": datetime.now().isoformat()
                 }
-                return f"Profile created successfully with ID: {profile_id}"
-            
+                return name
+
             elif action == "update":
-                if not data or "id" not in data:
-                    return "Error: Profile ID required for update"
-                profile_id = data["id"]
-                if profile_id not in self.profiles:
-                    return f"Error: Profile {profile_id} not found"
-                self.profiles[profile_id].update(data)
-                self.profiles[profile_id]["last_updated"] = datetime.now().isoformat()
-                return f"Profile {profile_id} updated successfully"
-            
+                if not data or "name" not in data:
+                    return "Error: Name required for update"
+                name = data["name"]
+                if name not in self.profiles:
+                    return f"Error: Profile for {name} not found"
+                
+                field = self._get_next_empty_field(self.profiles[name])
+                if not field:
+                    return "Profile is complete"
+
+                # Generate contextual question based on previous answers
+                question = self._generate_contextual_question(field, self.profiles[name])
+
+                # For nested fields
+                if "." in field:
+                    parent, child = field.split(".")
+                    if parent not in self.profiles[name]:
+                        self.profiles[name][parent] = {}
+                    
+                    response = self._run("ask", {"question": question})
+                    parsed_value = self._parse_response(response, field)
+                    self.profiles[name][parent][child] = parsed_value
+                else:
+                    response = self._run("ask", {"question": question})
+                    parsed_value = self._parse_response(response, field)
+                    self.profiles[name][field] = parsed_value
+
+                self.profiles[name]["last_updated"] = datetime.now().isoformat()
+                
+                # Try to create a StudentProfile object to validate
+                try:
+                    profile_data = self.profiles[name]
+                    if "availability" in profile_data:
+                        profile_data["availability"] = Availability(**profile_data["availability"])
+                    if "constraints" in profile_data:
+                        profile_data["constraints"] = Constraints(**profile_data["constraints"])
+                    StudentProfile(**profile_data)
+                except Exception as e:
+                    return f"Profile updated but validation failed: {str(e)}"
+                
+                return f"Profile for {name} updated successfully"
+
             elif action == "get":
-                if not data or "id" not in data:
-                    return "Error: Profile ID required"
-                profile_id = data["id"]
-                if profile_id not in self.profiles:
-                    return f"Error: Profile {profile_id} not found"
-                return json.dumps(self.profiles[profile_id], indent=2)
-            
+                if not data or "name" not in data:
+                    return "Error: Name required"
+                name = data["name"]
+                if name not in self.profiles:
+                    return f"Error: Profile for {name} not found"
+                return json.dumps(self.profiles[name], indent=2)
+
             else:
                 return "Invalid action specified"
         except Exception as e:
@@ -256,4 +396,4 @@ class Student:
         return cls(**data)
 
     def to_dict(self) -> Dict:
-        return self.__dict__ 
+        return self.__dict__
