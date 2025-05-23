@@ -1,6 +1,6 @@
 from crewai.tools import BaseTool
 from pydantic import Field, BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Literal
 import json
 import os
 from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
@@ -132,11 +132,21 @@ class CareerInsightTool(BaseTool):
         except Exception as e:
             return f"Error in career insight search: {str(e)}"
 
+
+class AskData(BaseModel):
+    """Data for the 'ask' action."""
+    question: str = Field(..., description="The question to ask the student.")
+
+class StudentProfileToolInput(BaseModel):
+    """Input schema for the Student Profile Manager tool."""
+    action: Literal["create", "update", "get", "ask", "next_question"] = Field(..., description="The action to perform ('create', 'update', 'get', 'ask', 'next_question').")
+    data: Optional[Dict] = Field(None, description="A dictionary containing data relevant to the action.")
+
 class StudentProfileTool(BaseTool):
     """Tool for managing student profiles and preferences."""
-    name: str = "Student Profile Manager"
+    name: str = "Student Profile Collector and Manager"
     description: str = """
-    Use this tool to manage student profile information and interact with the student.
+    Use this tool to collect and manage student profile information as interact with the student.
     Actions:
     - create: Create new student profile
     - update: Update existing profile
@@ -146,6 +156,7 @@ class StudentProfileTool(BaseTool):
     """
     profiles: Dict = Field(default_factory=dict)
     llm: LLM = Field(default_factory=lambda: LLM(model=os.environ["MODEL"]))
+    args_schema: type[BaseModel] = StudentProfileToolInput
 
     def _get_next_empty_field(self, profile_data: Dict) -> Optional[str]:
         """Identify next empty required field in the profile."""
@@ -199,13 +210,14 @@ class StudentProfileTool(BaseTool):
                 context += f"{key}: {value}\n"
 
         prompt = f"""Based on the following context of previous answers:
-{context}
+                    {context}
 
-Generate a natural, conversational question to ask about the user's {field.replace('.', ' ')}. 
-The question should be contextual and reference previous answers where relevant.
-If this is the first question (about name), just ask "What is your name?"
+                    Generate a natural, conversational question to ask about the user's {field.replace('.', ' ')}. 
+                    The question should be contextual and reference previous answers where relevant.
+                    If this is the first question (about name), just ask "What is your name?"
 
-Question:"""
+                    Question:
+                """
 
         # Use LLM to generate the question
         class QuestionResponse(BaseModel):
@@ -239,9 +251,9 @@ Question:"""
             if action == "ask":
                 if not data or "question" not in data:
                     return "Error: Question required for asking"
-                if not data or "description" not in data:
-                    data["question"] = data["description"]
-                    return "Error: Question required for asking"
+                # if not data or "description" not in data:
+                #     data["question"] = data["description"]
+                #     return "Error: Question required for asking"
                 print("\n" + "-"*80)
                 print("👤 Question for you:")
                 print(data["question"])
@@ -257,6 +269,7 @@ Question:"""
                     return "Error: Name is required"
                 
                 self.profiles[name] = {
+                    # "name": "Anonymous",
                     "name": name,
                     "created_at": datetime.now().isoformat(),
                     "last_updated": datetime.now().isoformat()

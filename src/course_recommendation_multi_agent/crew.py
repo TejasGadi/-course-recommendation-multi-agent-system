@@ -82,7 +82,6 @@ class CourseRecommendationMultiAgent():
         """Task for collecting student profile"""
         return Task(
             config=self.tasks_config['profile_collection_task'],
-            human_input=True
         )
 
     @task
