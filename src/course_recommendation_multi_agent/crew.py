@@ -5,10 +5,10 @@ from typing import List
 
 # Import tools directly from tools.py
 from .tools.tools import (
-    CourseSearchTool,
+    CoursesVectorDB,
     CareerInsightTool,
     StudentProfileTool,
-    VectorDBTool
+    CourseWebSearchTool
 )
 
 @CrewBase
@@ -45,8 +45,8 @@ class CourseRecommendationMultiAgent():
             verbose=True,
             allow_delegation=True,
             tools=[
-                CourseSearchTool(),
-                VectorDBTool()
+                CourseWebSearchTool(),
+                CoursesVectorDB()
             ]
         )
     
@@ -57,7 +57,7 @@ class CourseRecommendationMultiAgent():
             config=self.agents_config['recommendation_agent'],
             verbose=True,
             allow_delegation=True,
-            tools=[VectorDBTool()]
+            tools=[CoursesVectorDB()]
         )
 
     @agent

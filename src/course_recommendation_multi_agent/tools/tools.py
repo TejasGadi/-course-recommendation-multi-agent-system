@@ -1,16 +1,86 @@
 from crewai.tools import BaseTool
-from pydantic import Field, BaseModel
-from typing import Optional, Dict, List, Literal
+from pydantic import Field, BaseModel, validator
+from typing import Optional, Dict, List, Literal, Union, Any, ClassVar, Type
 import json
 import os
 from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
 from .models.course import Course
-from .models.student import StudentProfile, Availability, Constraints
 from datetime import datetime
 import chromadb
 from chromadb.config import Settings
 from crewai import LLM
 
+# Field-specific Pydantic models for validation
+class NameField(BaseModel):
+    name: str
+
+class AgeField(BaseModel):
+    age: int
+
+class EducationalLevelField(BaseModel):
+    educational_level: str
+
+class CourseInterestsField(BaseModel):
+    course_interests: List[str]
+
+class CourseModeField(BaseModel):
+    course_mode: Literal["online", "in-person", "hybrid"]
+
+class DurationField(BaseModel):
+    max_duration_months: int
+
+class DailyHoursField(BaseModel):
+    daily_hours: int
+
+class PreferredTimingField(BaseModel):
+    preferred_timing: Literal["morning", "afternoon", "evening", "flexible"]
+
+class DaysPerWeekField(BaseModel):
+    days_per_week: int
+
+class MaxCostField(BaseModel):
+    max_cost: float
+
+class LanguageField(BaseModel):
+    language: str
+
+class CertificationField(BaseModel):
+    certification_needed: bool
+
+class LocationField(BaseModel):
+    location_preference: str
+
+class CareerGoalsField(BaseModel):
+    career_goals: List[str]
+
+class PreviousCoursesField(BaseModel):
+    previous_courses: List[str]
+
+class SkillsField(BaseModel):
+    skills: List[str]
+
+class ProfileCompletion(BaseModel):
+    completion_percentage: float
+    next_field: Optional[str]
+    is_complete: bool
+
+class AskData(BaseModel):
+    """Data for the 'ask' action."""
+    question: str = Field(..., description="The question to ask the student.")
+
+class CreateData(BaseModel):
+    """Data for the 'create' action."""
+    pass  # No additional data needed for create action
+
+class UpdateData(BaseModel):
+    """Data for the 'update' action."""
+    name: str = Field(..., description="Name of the student whose profile to update.")
+
+class GetData(BaseModel):
+    """Data for the 'get' action."""
+    name: str = Field(..., description="Name of the student whose profile to retrieve.")
+
+# Vector DB functionality class
 class CourseVectorDB:
     """Vector database for course storage and retrieval"""
     def __init__(self, persist_directory: str = "knowledge/vector_db"):
@@ -58,15 +128,98 @@ class CourseVectorDB:
         )
         return success
 
-class CourseSearchTool(BaseTool):
+#Tool Input schema
+class CourseWebSearchInput(BaseModel):
+    """Input schema for the Course Web Search tool."""
+    query: str = Field(
+        ...,
+        description="The search query related to courses. Can include course titles, descriptions, providers, and requirements."
+    )
+
+    @validator('query')
+    def validate_query(cls, v):
+        if not v.strip():
+            raise ValueError("Search query cannot be empty")
+        if len(v) < 3:
+            raise ValueError("Search query must be at least 3 characters long")
+        return v
+
+    class Config:
+        arbitrary_types_allowed = True
+
+#Tool Input schema
+class CareerInsightInput(BaseModel):
+    """Input schema for the Career Insight tool."""
+    query: str = Field(
+        ...,
+        description="The career field or job title to get insights about. Used to fetch career insights, job market data, and educational pathways."
+    )
+
+    @validator('query')
+    def validate_query(cls, v):
+        if not v.strip():
+            raise ValueError("Career query cannot be empty")
+        if len(v) < 3:
+            raise ValueError("Career query must be at least 3 characters long")
+        return v
+
+    class Config:
+        arbitrary_types_allowed = True
+    
+#Tool Input schema
+class CoursesVectorDBInput(BaseModel):
+    """Input schema for the Courses Vector Database tool."""
+    action: Literal["search", "add", "update", "delete"] = Field(
+        ..., 
+        description="The action to perform on the courses database"
+    )
+    data: Dict[str, Any] = Field(
+        ...,
+        description="""
+        Data for the action:
+        - search: {"query": str, "n_results": Optional[int], "filters": Optional[Dict]}
+        - add: Course data dictionary
+        - update: Course data dictionary
+        - delete: {"course_id": str}
+        """
+    )
+
+    @validator('data')
+    def validate_data(cls, v, values):
+        action = values.get('action')
+        if not action:
+            raise ValueError("Action is required")
+            
+        if action == "search":
+            if "query" not in v:
+                raise ValueError("Search requires 'query' field")
+        elif action in ["add", "update"]:
+            required_fields = ["id", "title", "description", "provider"]
+            missing = [f for f in required_fields if f not in v]
+            if missing:
+                raise ValueError(f"Missing required course fields: {', '.join(missing)}")
+        elif action == "delete":
+            if "course_id" not in v:
+                raise ValueError("Delete requires 'course_id' field")
+        return v
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+
+
+#Tool
+class CourseWebSearchTool(BaseTool):
     """Tool for searching courses using web search."""
-    name: str = "Course Search"
+    name: str = "Course Web Search"
     description: str = """
     Use this tool to search for courses online.
     Provide a search query related to courses, and it will return relevant results.
     The search can include course titles, descriptions, providers, and requirements.
     """
     tavily_search: TavilySearchAPIWrapper = Field(default_factory=TavilySearchAPIWrapper)
+    args_schema: Type[BaseModel] = CourseWebSearchInput
 
     def _run(self, query: str) -> str:
         try:
@@ -92,6 +245,7 @@ class CourseSearchTool(BaseTool):
         except Exception as e:
             return f"Error in course search: {str(e)}"
 
+#Tool
 class CareerInsightTool(BaseTool):
     """Tool for gathering career insights and job market data."""
     name: str = "Career Insight"
@@ -100,6 +254,7 @@ class CareerInsightTool(BaseTool):
     Provide a career field or job title to get relevant information.
     """
     tavily_search: TavilySearchAPIWrapper = Field(default_factory=TavilySearchAPIWrapper)
+    args_schema: Type[BaseModel] = CareerInsightInput
 
     def _run(self, query: str) -> str:
         try:
@@ -133,70 +288,77 @@ class CareerInsightTool(BaseTool):
             return f"Error in career insight search: {str(e)}"
 
 
-class AskData(BaseModel):
-    """Data for the 'ask' action."""
-    question: str = Field(..., description="The question to ask the student.")
 
 class StudentProfileToolInput(BaseModel):
     """Input schema for the Student Profile Manager tool."""
-    action: Literal["create", "update", "get", "ask", "next_question"] = Field(..., description="The action to perform ('create', 'update', 'get', 'ask', 'next_question').")
-    data: Optional[Dict] = Field(None, description="A dictionary containing data relevant to the action.")
+    action: Literal["create", "update", "get", "ask"] = Field(
+        ..., 
+        description="The action to perform on the student profile."
+    )
+    name: Optional[str] = Field(
+        default=None,
+        description="Name of the student for profile operations. Required for 'update' and 'get' actions."
+    )
+    question: Optional[str] = Field(
+        default=None,
+        description="Question to ask the student. Required for 'ask' action."
+    )
 
+    @validator('name')
+    def validate_name(cls, v, values):
+        action = values.get('action')
+        if action in ['update', 'get'] and not v:
+            raise ValueError(f"'{action}' action requires 'name' field")
+        return v
+
+    @validator('question')
+    def validate_question(cls, v, values):
+        action = values.get('action')
+        if action == 'ask' and not v:
+            raise ValueError("'ask' action requires 'question' field")
+        return v
+
+    class Config:
+        arbitrary_types_allowed = True
+
+#Tool
 class StudentProfileTool(BaseTool):
     """Tool for managing student profiles and preferences."""
     name: str = "Student Profile Collector and Manager"
     description: str = """
     Use this tool to collect and manage student profile information as interact with the student.
-    Actions:
+    Actions and required fields:
     - create: Create new student profile
+        Required fields: none
     - update: Update existing profile
+        Required fields: name
     - get: Retrieve profile information
-    - ask: Ask a question to the student and get their response
-    - next_question: Get next question based on current profile state
+        Required fields: name
+    - ask: Ask a question to the student
+        Required fields: question
     """
     profiles: Dict = Field(default_factory=dict)
     llm: LLM = Field(default_factory=lambda: LLM(model=os.environ["MODEL"]))
     args_schema: type[BaseModel] = StudentProfileToolInput
 
-    def _get_next_empty_field(self, profile_data: Dict) -> Optional[str]:
-        """Identify next empty required field in the profile."""
-        # Define the order of fields and their base questions
-        required_fields = [
-            ("name", "name"),
-            ("educational_level", "education"),
-            ("age", "age"),
-            ("interests", "interests"),
-            ("course_mode", "learning mode"),
-            ("max_duration_months", "time commitment"),
-            ("availability.daily_hours", "daily hours"),
-            ("availability.preferred_timing", "preferred timing"),
-            ("availability.days_per_week", "weekly commitment"),
-            ("constraints.max_cost", "budget"),
-            ("constraints.language", "languages"),
-            ("constraints.certification_needed", "certification"),
-            ("constraints.location_preference", "location"),
-            ("career_goals", "career goals"),
-            ("previous_courses", "previous courses"),
-            ("skills", "current skills")
-        ]
-
-        # Check nested fields in availability and constraints
-        if "availability" not in profile_data or not isinstance(profile_data["availability"], dict):
-            return "availability.daily_hours"
-        if "constraints" not in profile_data or not isinstance(profile_data["constraints"], dict):
-            return "constraints.language"
-
-        # Find the next empty field
-        for field, field_type in required_fields:
-            if "." in field:
-                parent, child = field.split(".")
-                if parent in profile_data and isinstance(profile_data[parent], dict):
-                    if child not in profile_data[parent] or not profile_data[parent][child]:
-                        return field
-            elif field not in profile_data or not profile_data[field]:
-                return field
-        
-        return None
+    FIELD_MODELS: ClassVar[Dict[str, Type[BaseModel]]] = {
+        "name": NameField,
+        "age": AgeField,
+        "educational_level": EducationalLevelField,
+        "course_interests": CourseInterestsField,
+        "course_mode": CourseModeField,
+        "max_duration_months": DurationField,
+        "availability.daily_hours": DailyHoursField,
+        "availability.preferred_timing": PreferredTimingField,
+        "availability.days_per_week": DaysPerWeekField,
+        "constraints.max_cost": MaxCostField,
+        "constraints.language": LanguageField,
+        "constraints.certification_needed": CertificationField,
+        "constraints.location_preference": LocationField,
+        "career_goals": CareerGoalsField,
+        "previous_courses": PreviousCoursesField,
+        "skills": SkillsField
+    }
 
     def _generate_contextual_question(self, field: str, profile_data: Dict) -> str:
         """Generate a contextual question based on the field and previous answers."""
@@ -227,115 +389,152 @@ class StudentProfileTool(BaseTool):
         response = llm.call(prompt)
         return response.question
 
-    def _parse_response(self, response: str, field: str) -> any:
-        """Parse user response based on field type."""
-        if field == "age":
-            return int(response)
-        elif field in ["interests", "career_goals", "previous_courses", "skills"]:
-            # Use LLM to extract list from free text
-            # list_schema = type("ListSchema", (BaseModel,), {"items": List[str]})
-            class ListSchema(BaseModel):
-                items: List[str]
-            
-            llm = LLM(model=os.environ["MODEL"], response_format=ListSchema)
-            parsed = llm.call(f"Extract a list of items from this text: {response}")
-            return parsed.items
-        elif field == "constraints.certification_needed":
-            return response.lower() in ["yes", "true", "1", "y"]
-        elif field in ["availability.daily_hours", "availability.days_per_week"]:
-            return int(response)
-        return response
+    def _calculate_completion(self, profile_data: Dict) -> ProfileCompletion:
+        """Calculate profile completion percentage and next empty field."""
+        total_fields = len(self.FIELD_MODELS)
+        filled_fields = 0
+        next_empty = None
 
-    def _run(self, action: str, data: Optional[Dict] = None) -> str:
+        for field in self.FIELD_MODELS.keys():
+            if "." in field:
+                parent, child = field.split(".")
+                if (parent in profile_data and 
+                    isinstance(profile_data[parent], dict) and 
+                    child in profile_data[parent] and 
+                    profile_data[parent][child]):
+                    filled_fields += 1
+                elif not next_empty:
+                    next_empty = field
+            elif field in profile_data and profile_data[field]:
+                filled_fields += 1
+            elif not next_empty:
+                next_empty = field
+
+        completion_percentage = (filled_fields / total_fields) * 100
+
+        return ProfileCompletion(
+            completion_percentage=round(completion_percentage, 2),
+            next_field=next_empty,
+            is_complete=completion_percentage == 100
+        )
+
+    def _validate_field_response(self, field: str, response: str) -> any:
+        """Validate and parse response using field-specific Pydantic model."""
+        try:
+            model = self.FIELD_MODELS[field]
+            
+            # For fields that expect lists, pre-process the response
+            if field in ["course_interests", "career_goals", "previous_courses", "skills"]:
+                llm = LLM(model=os.environ["MODEL"], response_format=model)
+                parsed = llm.call(f"Extract a list from this text: {response}")
+                return getattr(parsed, field.split(".")[-1])
+            
+            # For boolean fields
+            if field == "constraints.certification_needed":
+                return model(certification_needed=response.lower() in ["yes", "true", "1", "y"]).certification_needed
+            
+            # For other fields
+            field_name = field.split(".")[-1]
+            return getattr(model(**{field_name: response}), field_name)
+            
+        except Exception as e:
+            raise ValueError(f"Invalid response for {field}: {str(e)}")
+
+    def _update_profile(self, name: str, field: str, value: any) -> ProfileCompletion:
+        """Update profile with validated field value and return completion status."""
+        if "." in field:
+            parent, child = field.split(".")
+            if parent not in self.profiles[name]:
+                self.profiles[name][parent] = {}
+            self.profiles[name][parent][child] = value
+        else:
+            self.profiles[name][field] = value
+
+        self.profiles[name]["last_updated"] = datetime.now().isoformat()
+        return self._calculate_completion(self.profiles[name])
+
+    def _run(self, action: str, name: Optional[str] = None, question: Optional[str] = None) -> str:
         try:
             if action == "ask":
-                if not data or "question" not in data:
+                if not question:
                     return "Error: Question required for asking"
-                # if not data or "description" not in data:
-                #     data["question"] = data["description"]
-                #     return "Error: Question required for asking"
                 print("\n" + "-"*80)
                 print("👤 Question for you:")
-                print(data["question"])
+                print(question)
                 print("-"*80)
                 response = input("Your answer: ").strip()
                 return response
 
             elif action == "create":
-                # Ask for name first
                 question = self._generate_contextual_question("name", {})
-                name = self._run("ask", {"question": question})
+                name = self._run("ask", question=question)
                 if not name:
                     return "Error: Name is required"
                 
                 self.profiles[name] = {
-                    # "name": "Anonymous",
                     "name": name,
                     "created_at": datetime.now().isoformat(),
                     "last_updated": datetime.now().isoformat()
                 }
-                return name
+                completion = self._calculate_completion(self.profiles[name])
+                return json.dumps({
+                    "name": name,
+                    "completion": completion.dict()
+                })
 
             elif action == "update":
-                if not data or "name" not in data:
+                if not name:
                     return "Error: Name required for update"
-                name = data["name"]
                 if name not in self.profiles:
                     return f"Error: Profile for {name} not found"
                 
-                field = self._get_next_empty_field(self.profiles[name])
-                if not field:
-                    return "Profile is complete"
+                completion = self._calculate_completion(self.profiles[name])
+                if completion.is_complete:
+                    return json.dumps({
+                        "message": "Profile is complete",
+                        "completion": completion.dict()
+                    })
 
-                # Generate contextual question based on previous answers
+                field = completion.next_field
                 question = self._generate_contextual_question(field, self.profiles[name])
-
-                # For nested fields
-                if "." in field:
-                    parent, child = field.split(".")
-                    if parent not in self.profiles[name]:
-                        self.profiles[name][parent] = {}
-                    
-                    response = self._run("ask", {"question": question})
-                    parsed_value = self._parse_response(response, field)
-                    self.profiles[name][parent][child] = parsed_value
-                else:
-                    response = self._run("ask", {"question": question})
-                    parsed_value = self._parse_response(response, field)
-                    self.profiles[name][field] = parsed_value
-
-                self.profiles[name]["last_updated"] = datetime.now().isoformat()
+                response = self._run("ask", question=question)
                 
-                # Try to create a StudentProfile object to validate
                 try:
-                    profile_data = self.profiles[name]
-                    if "availability" in profile_data:
-                        profile_data["availability"] = Availability(**profile_data["availability"])
-                    if "constraints" in profile_data:
-                        profile_data["constraints"] = Constraints(**profile_data["constraints"])
-                    StudentProfile(**profile_data)
-                except Exception as e:
-                    return f"Profile updated but validation failed: {str(e)}"
-                
-                return f"Profile for {name} updated successfully"
+                    validated_value = self._validate_field_response(field, response)
+                    new_completion = self._update_profile(name, field, validated_value)
+                    
+                    return json.dumps({
+                        "message": f"Updated {field}",
+                        "completion": new_completion.dict()
+                    })
+                except ValueError as e:
+                    return json.dumps({
+                        "error": str(e),
+                        "completion": completion.dict()
+                    })
 
             elif action == "get":
-                if not data or "name" not in data:
+                if not name:
                     return "Error: Name required"
-                name = data["name"]
                 if name not in self.profiles:
                     return f"Error: Profile for {name} not found"
-                return json.dumps(self.profiles[name], indent=2)
+                
+                completion = self._calculate_completion(self.profiles[name])
+                return json.dumps({
+                    "profile": self.profiles[name],
+                    "completion": completion.dict()
+                })
 
             else:
                 return "Invalid action specified"
         except Exception as e:
             return f"Error in profile management: {str(e)}"
 
-class VectorDBTool(BaseTool):
-    name: str = "Vector Database"
-    description: str = "Manages course storage and retrieval using vector database"
+class CoursesVectorDB(BaseTool):
+    name: str = "Courses Database"
+    description: str = "Manages course storage and retrieval using vector database, perform vector database operations actions: search, add, update, delete , data is courses database"
     db: CourseVectorDB = Field(default_factory=lambda: CourseVectorDB())
+    args_schema: Type[BaseModel] = CoursesVectorDBInput
 
     def _run(self, action: str, data: Dict) -> str:
         """
@@ -366,47 +565,3 @@ class VectorDBTool(BaseTool):
                 return "Invalid action"
         except Exception as e:
             return f"Error in vector database tool: {str(e)}"
-
-class WebSearchTool(BaseTool):
-    name: str = "Web Search"
-    description: str = "Searches the web for course information and career insights"
-    tavily_search: TavilySearchAPIWrapper = Field(default_factory=TavilySearchAPIWrapper)
-
-    def _run(self, query: str) -> str:
-        """
-        Search the web for information
-        query: search query string
-        """
-        try:
-            results = self.tavily_search.results(
-                query,
-                max_results=5,
-                search_depth="advanced"
-            )
-            return json.dumps(results)
-        except Exception as e:
-            return f"Error in web search tool: {str(e)}"
-
-class Course:
-    """Temporary Course class until proper model is implemented"""
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-    @classmethod
-    def from_dict(cls, data: Dict):
-        return cls(**data)
-
-    def to_dict(self) -> Dict:
-        return self.__dict__
-
-class Student:
-    """Temporary Student class until proper model is implemented"""
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-    @classmethod
-    def from_dict(cls, data: Dict):
-        return cls(**data)
-
-    def to_dict(self) -> Dict:
-        return self.__dict__
